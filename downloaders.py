@@ -64,23 +64,58 @@ def get_yt_formats(url: str) -> dict[str, Any]:
     ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
+
+    formats: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for f in info.get("formats", []):
+        fmt_id = str(f.get("format_id") or "")
+        if not fmt_id or fmt_id in seen:
+            continue
+        seen.add(fmt_id)
+
+        height = f.get("height")
+        ext = f.get("ext") or "?"
+        vcodec = f.get("vcodec")
+        acodec = f.get("acodec")
+        size = f.get("filesize") or f.get("filesize_approx")
+        note = f.get("format_note") or ""
+
+        label_parts = [fmt_id]
+
+        if height:
+            label_parts.append(f"{height}p")
+        elif vcodec == "none":
+            label_parts.append("audio")
+
+        label_parts.append(ext)
+
+        if note:
+            label_parts.append(str(note))
+
+        if size:
+            label_parts.append(human_size(size))
+
+        formats.append(
+            {
+                "format_id": fmt_id,
+                "label": " | ".join(label_parts),
+                "height": height or 0,
+                "filesize": size,
+                "vcodec": vcodec,
+                "acodec": acodec,
+            }
+        )
+
+    formats.sort(key=lambda x: (x["height"], x["filesize"] or 0), reverse=True)
+
     return {
         "title": info.get("title") or "video",
         "duration": info.get("duration"),
         "filesize": info.get("filesize") or info.get("filesize_approx"),
         "webpage_url": info.get("webpage_url") or url,
+        "formats": formats[:20],
     }
-
-
-def _yt_format_selector(choice: str) -> str:
-    mapping = {
-        "bestvideo": "bestvideo+bestaudio/best",
-        "bestaudio": "bestaudio/best",
-        "1080p": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-        "720p": "bestvideo[height<=720]+bestaudio/best[height<=720]/best",
-        "480p": "bestvideo[height<=480]+bestaudio/best[height<=480]/best",
-    }
-    return mapping.get(choice, "bestvideo+bestaudio/best")
 
 
 async def process_task(
@@ -97,17 +132,18 @@ async def process_task(
     reporter = asyncio.create_task(progress_reporter(message, progress, f"Task #{task.id} running", done))
     try:
         if task.type == "ytdlp":
-            await download_ytdlp(db, task, user, progress, is_cancelled)
+            await download_ytdlp(db, task, user, progress, is_cancelled, message)
         elif task.type == "direct":
             await download_direct(db, task, user, progress, is_cancelled)
         elif task.type == "telegram":
-            await download_telegram(app, db, task, user, progress, is_cancelled)
+            await download_telegram(app, db, task, user, progress, is_cancelled, message)
         else:
             raise RuntimeError(f"Unsupported task type: {task.type}")
         done.set()
         await reporter
         fresh = db.get_task(task.id)
-        await safe_edit(message, f"Task #{task.id} completed.\nSaved to:\n{fresh.drive_path if fresh else 'Drive'}")
+        if task.type == "direct":
+            await safe_edit(message, f"Task #{task.id} completed.\nSaved to:\n{fresh.drive_path if fresh else 'Drive'}")
         db.set_finished(task.id, "completed")
     except DownloadCancelled:
         done.set()
@@ -127,6 +163,7 @@ async def download_ytdlp(
     user: User,
     progress: Progress,
     is_cancelled: Callable[[int], bool],
+    message: Any,
 ) -> None:
     local_dir = user_local_dir(user)
     local_template = str(local_dir / "%(title).180B [%(id)s].%(ext)s")
@@ -143,7 +180,7 @@ async def download_ytdlp(
         progress.text = d.get("status", "downloading")
 
     ydl_opts = {
-        "format": _yt_format_selector(task.selected_format or "bestvideo"),
+        "format": task.selected_format or "bestvideo+bestaudio/best",
         "outtmpl": local_template,
         "merge_output_format": "mp4",
         "restrictfilenames": False,
@@ -165,7 +202,10 @@ async def download_ytdlp(
     if local_path.stat().st_size > config.max_file_size_bytes:
         local_path.unlink(missing_ok=True)
         raise RuntimeError("Downloaded file exceeds MAX_FILE_SIZE_MB")
+    file_size = local_path.stat().st_size
+    await safe_edit(message, f"sending to drive... {human_size(file_size)}")
     dest = move_to_drive(local_path, user)
+    await safe_edit(message, f"Task #{task.id} completed.\nSaved to Drive:\n{dest.name}\nSize: {human_size(file_size)}")
     db.update_task(task.id, filename=dest.name, local_path=str(local_path), drive_path=str(dest))
 
 
@@ -240,6 +280,7 @@ async def download_telegram(
     user: User,
     progress: Progress,
     is_cancelled: Callable[[int], bool],
+    message: Any,
 ) -> None:
     payload = json.loads(task.source)
     msg = await app.get_messages(payload["chat_id"], payload["message_id"])
@@ -261,5 +302,8 @@ async def download_telegram(
     if p.stat().st_size > config.max_file_size_bytes:
         p.unlink(missing_ok=True)
         raise RuntimeError("Downloaded file exceeds MAX_FILE_SIZE_MB")
+    file_size = p.stat().st_size
+    await safe_edit(message, f"sending to drive... {human_size(file_size)}")
     dest = move_to_drive(p, user, filename)
+    await safe_edit(message, f"Task #{task.id} completed.\nSaved to Drive:\n{dest.name}\nSize: {human_size(file_size)}")
     db.update_task(task.id, filename=dest.name, local_path=str(p), drive_path=str(dest))

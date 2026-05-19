@@ -199,10 +199,17 @@ def setup_handlers(app: Client, db: Database, queue_manager: QueueManager) -> No
         try:
             info = await asyncio.to_thread(get_yt_formats, url)
             key = pending.put({"type": "ytdlp", "url": url})
-            buttons = [
-                [InlineKeyboardButton("best video", callback_data=f"yt:bestvideo:{key}"), InlineKeyboardButton("best audio", callback_data=f"yt:bestaudio:{key}")],
-                [InlineKeyboardButton("1080p", callback_data=f"yt:1080p:{key}"), InlineKeyboardButton("720p", callback_data=f"yt:720p:{key}"), InlineKeyboardButton("480p", callback_data=f"yt:480p:{key}")],
-            ]
+
+            buttons = []
+            for fmt in info["formats"]:
+                fmt_id = fmt["format_id"]
+                label = fmt["label"][:48]
+                buttons.append([InlineKeyboardButton(label, callback_data=f"yt:{key}:{fmt_id}")])
+
+            if not buttons:
+                await message.reply_text("No downloadable formats found.")
+                return
+
             await message.reply_text(
                 f"Video detected:\n{info['title']}\nSize: {human_size(info.get('filesize'))}\nChoose format:",
                 reply_markup=InlineKeyboardMarkup(buttons),
@@ -245,15 +252,16 @@ def setup_handlers(app: Client, db: Database, queue_manager: QueueManager) -> No
         data = cq.data or ""
         try:
             if data.startswith("yt:"):
-                _, choice, key = data.split(":", 2)
+                _, key, format_id = data.split(":", 2)
                 payload = pending.get(key)
                 if not payload:
                     await cq.answer("This button expired", show_alert=True)
                     return
-                task_id = db.create_task(user.telegram_id, "ytdlp", payload["url"], selected_format=choice)
-                status = await cq.message.reply_text(f"Task #{task_id} queued.")
-                pos = await queue_manager.enqueue(task_id, status)
-                await status.edit_text(f"Task #{task_id} queued. Position: {pos}")
+
+                task_id = db.create_task(user.telegram_id, "ytdlp", payload["url"], selected_format=format_id)
+                await cq.message.edit_text(f"Task #{task_id} queued.")
+                pos = await queue_manager.enqueue(task_id, cq.message)
+                await cq.message.edit_text(f"Task #{task_id} queued. Position: {pos}")
                 await cq.answer("Queued")
             elif data.startswith("direct:"):
                 key = data.split(":", 1)[1]
@@ -262,9 +270,9 @@ def setup_handlers(app: Client, db: Database, queue_manager: QueueManager) -> No
                     await cq.answer("This button expired", show_alert=True)
                     return
                 task_id = db.create_task(user.telegram_id, "direct", payload["url"], filename=payload["filename"])
-                status = await cq.message.reply_text(f"Task #{task_id} queued.")
-                pos = await queue_manager.enqueue(task_id, status)
-                await status.edit_text(f"Task #{task_id} queued. Position: {pos}")
+                await cq.message.edit_text(f"Task #{task_id} queued.")
+                pos = await queue_manager.enqueue(task_id, cq.message)
+                await cq.message.edit_text(f"Task #{task_id} queued. Position: {pos}")
                 await cq.answer("Queued")
             elif data.startswith("tg:"):
                 key = data.split(":", 1)[1]
@@ -274,9 +282,9 @@ def setup_handlers(app: Client, db: Database, queue_manager: QueueManager) -> No
                     return
                 source = json.dumps({"chat_id": payload["chat_id"], "message_id": payload["message_id"]})
                 task_id = db.create_task(user.telegram_id, "telegram", source, filename=payload["filename"])
-                status = await cq.message.reply_text(f"Task #{task_id} queued.")
-                pos = await queue_manager.enqueue(task_id, status)
-                await status.edit_text(f"Task #{task_id} queued. Position: {pos}")
+                await cq.message.edit_text(f"Task #{task_id} queued.")
+                pos = await queue_manager.enqueue(task_id, cq.message)
+                await cq.message.edit_text(f"Task #{task_id} queued. Position: {pos}")
                 await cq.answer("Queued")
             elif data.startswith("del:"):
                 _, area, key = data.split(":", 2)
