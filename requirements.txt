@@ -1,0 +1,4 @@
+Kurigram>=2.2.0
+TgCrypto>=1.2.5
+python-dotenv>=1.0.1
+yt-dlp>=2026.1.1
