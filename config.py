@@ -48,5 +48,5 @@ config = Config(
     drive_root=Path(os.getenv("DRIVE_ROOT", "/mnt/gdrive")).resolve(),
     max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "1")),
     max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "2048")),
-    youtube_cookies_path=int(os.getenv("YOUTUBE_COOKIES_PATH", "./cookies.txt")),
+    youtube_cookies_path=os.getenv("YOUTUBE_COOKIES_PATH", "./cookies.txt"),
 )
