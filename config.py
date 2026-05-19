@@ -31,6 +31,7 @@ class Config:
     max_concurrent_downloads: int
     max_file_size_mb: int
     progress_update_seconds: int = 5
+    youtube_cookies_path: str = ''
 
     @property
     def max_file_size_bytes(self) -> int:
@@ -47,4 +48,5 @@ config = Config(
     drive_root=Path(os.getenv("DRIVE_ROOT", "/mnt/gdrive")).resolve(),
     max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "1")),
     max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "2048")),
+    youtube_cookies_path=int(os.getenv("YOUTUBE_COOKIES_PATH", "./cookies.txt")),
 )

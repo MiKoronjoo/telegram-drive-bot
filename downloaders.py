@@ -62,6 +62,8 @@ async def progress_reporter(message: Any, progress: Progress, prefix: str, done:
 
 def get_yt_formats(url: str) -> dict[str, Any]:
     ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    if 'youtube.com' in url.lower() or 'youtu.be' in url.lower():
+            ydl_opts['cookiefile'] = config.youtube_cookies_path
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
@@ -189,9 +191,12 @@ async def download_ytdlp(
         "quiet": True,
         "no_warnings": True,
     }
+    url = task.source
+    if 'youtube.com/' in url.lower() or 'youtu.be/' in url.lower():
+            ydl_opts['cookiefile'] = config.youtube_cookies_path
 
     before = set(local_dir.glob("*"))
-    await asyncio.to_thread(_run_ytdlp, task.source, ydl_opts)
+    await asyncio.to_thread(_run_ytdlp, url, ydl_opts)
     after = set(local_dir.glob("*"))
     new_files = [p for p in after - before if p.is_file()]
     if not new_files:
